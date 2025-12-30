@@ -55,6 +55,7 @@ def fetch_page(url, retry=3):
             print(f"  → Pobieranie: {url} (próba {attempt + 1}/{retry})")
             response = requests.get(url, headers=HEADERS, timeout=15, allow_redirects=True)
             response.raise_for_status()
+            # POPRAWKA: Wymuszamy UTF-8
             response.encoding = 'utf-8'
             print(f"  ✓ Sukces: {response.status_code} ({len(response.content)} bajtów)")
             return response
@@ -96,33 +97,53 @@ def extract_articles_from_page(soup, page_num):
     """Wyciąga artykuły z pojedynczej strony"""
     articles = []
     
-    # Znajdujemy wszystkie kontenery artykułów
+    # Szukamy divów z klasą "article"
     article_divs = soup.find_all('div', class_='article')
     
-    print(f"  📄 Znaleziono {len(article_divs)} kontenerów artykułów na stronie {page_num}")
+    print(f"  📄 Znaleziono {len(article_divs)} kontenerów <div class='article'> na stronie {page_num}")
     
     for idx, article_div in enumerate(article_divs, 1):
         try:
-            # Wyciągamy link i tytuł
-            link_tag = article_div.find('a', class_='title')
-            if not link_tag:
-                # Próba alternatywna - szukamy w entry-content
-                entry_content = article_div.find('div', class_='entry-content')
-                if entry_content:
-                    link_tag = entry_content.find('a')
+            # POPRAWKA: Tytuł jest w <span class="entry-title"> -> <a>
+            title_span = article_div.find('span', class_='entry-title')
             
-            if not link_tag or not link_tag.get('href'):
+            if not title_span:
+                print(f"    ⚠ [{idx}] Brak <span class='entry-title'> - pomijam")
                 continue
             
-            title = link_tag.get_text(strip=True)
-            link = link_tag.get('href')
+            title_link = title_span.find('a')
+            
+            if not title_link or not title_link.get('href'):
+                print(f"    ⚠ [{idx}] Brak linku w entry-title - pomijam")
+                continue
+            
+            if not title_link or not title_link.get('href'):
+                print(f"    ⚠ [{idx}] Brak linku w entry-title - pomijam")
+                continue
+            
+            title = title_link.get_text(strip=True)
+            link = title_link.get('href')
             
             # Budujemy pełny URL
             if not link.startswith('http'):
                 link = urljoin(BASE_URL, link)
             
-            # Wyciągamy datę
-            time_tag = article_div.find('time', class_='entry-date')
+            # Pomijamy linki zewnętrzne/nieprawidłowe
+            if not link.startswith(BASE_URL):
+                print(f"    ⚠ [{idx}] Link zewnętrzny - pomijam: {link}")
+                continue
+            
+            # Wyciągamy datę z <time class="entry-date"> (PIERWSZY tag time)
+            entry_meta = article_div.find('div', class_='entry-meta')
+            time_tag = None
+            
+            if entry_meta:
+                time_tag = entry_meta.find('time', class_='entry-date')
+            
+            # Fallback - szukamy bezpośrednio w article_div
+            if not time_tag:
+                time_tag = article_div.find('time', class_='entry-date')
+            
             if not time_tag or not time_tag.get('datetime'):
                 print(f"    ⚠ [{idx}] Brak daty - pomijam: {title[:50]}...")
                 continue
@@ -136,11 +157,18 @@ def extract_articles_from_page(soup, page_num):
                 print(f"    ⏭ [{idx}] Za stary artykuł ({pub_date.strftime('%Y-%m-%d %H:%M')}) - pomijam")
                 continue
             
-            # Wyciągamy opis (jeśli jest)
+            # Wyciągamy opis z <p> (pierwszy akapit po entry-title)
             description = ""
-            lead_tag = article_div.find('p', class_='lead')
-            if lead_tag:
-                description = lead_tag.get_text(strip=True)
+            # Szukamy <p> w entry-content (pomijamy linki "Czytaj dalej")
+            entry_content = article_div.find('div', class_='entry-content')
+            if entry_content:
+                p_tag = entry_content.find('p')
+                if p_tag:
+                    # Usuwamy link "Czytaj dalej"
+                    more_link = p_tag.find('a', class_='more-link')
+                    if more_link:
+                        more_link.decompose()
+                    description = p_tag.get_text(strip=True)
             
             article = {
                 'title': title,
@@ -155,6 +183,8 @@ def extract_articles_from_page(soup, page_num):
             
         except Exception as e:
             print(f"    ✗ [{idx}] Błąd parsowania artykułu: {e}")
+            import traceback
+            traceback.print_exc()
             continue
     
     return articles
@@ -257,6 +287,14 @@ def main():
     
     if not all_articles:
         print("⚠ Nie znaleziono żadnych artykułów! Sprawdź konfigurację.")
+        print("\n💡 DEBUGOWANIE - zapisuję pierwszą stronę do pliku debug.html")
+        try:
+            response = requests.get(NEWS_URL, headers=HEADERS, timeout=10)
+            with open('debug.html', 'w', encoding='utf-8') as f:
+                f.write(response.text)
+            print("✓ Zapisano debug.html - sprawdź ten plik aby zobaczyć strukturę HTML")
+        except Exception as e:
+            print(f"✗ Nie udało się zapisać debug.html: {e}")
         return 1
     
     # Usuwanie duplikatów
