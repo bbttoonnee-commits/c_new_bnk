@@ -1,0 +1,51 @@
+name: Generate Bankier RSS Feed
+
+on:
+  schedule:
+    # Uruchamiaj co 2 godziny (możesz zmienić)
+    - cron: '0 */2 * * *'
+  
+  workflow_dispatch:  # Pozwala na manualne uruchomienie
+  
+  push:
+    branches:
+      - main
+    paths:
+      - 'bankier_rss_generator.py'
+
+jobs:
+  generate-rss:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+        cache: 'pip'
+    
+    - name: Install dependencies
+      run: |
+        pip install --upgrade pip
+        pip install requests beautifulsoup4 feedgen pytz lxml
+    
+    - name: Run RSS generator
+      run: |
+        python bankier_rss_generator.py
+    
+    - name: Commit and push RSS file
+      run: |
+        git config --local user.email "github-actions[bot]@users.noreply.github.com"
+        git config --local user.name "github-actions[bot]"
+        git add bankier_rss.xml
+        git diff --quiet && git diff --staged --quiet || (git commit -m "Update RSS feed - $(date +'%Y-%m-%d %H:%M:%S')" && git push)
+    
+    - name: Upload RSS as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: bankier-rss-feed
+        path: bankier_rss.xml
+        retention-days: 7
